@@ -152,6 +152,60 @@ app.get('/api/projects/:userId', async (req, res) => {
   }
 });
 
+// --- BOARD ROUTES ---
+
+/**
+ * Route to get all boards for a specific project.
+ */
+app.get('/api/projects/:projectId/boards', async (req, res) =>{
+  const {projectId} = req.params;
+
+  try{
+    const boards = await prisma.board.findMany({
+      where: { projectId },
+      orderBy: { order: 'asc' }, // Order boards by their 'order' field
+    });
+    res.status(200).json(boards);
+  }catch(error){
+    console.error('Failed to get boards', error);
+    res.status(500).json({message: 'Failed to get Boards'});
+  }
+});
+
+/**
+ * Route to create a new board within a project.
+ */
+app.post('/api/projects/:projectId/boards', async (req, res) => {
+  const {projectId} = req.params;
+  const {name} = req.body;
+
+  if (!name){
+    return res.status(400).json({message: 'Board name is required'});
+  }
+
+  try {
+    // Find the highest 'order' value for existing boards in this project
+    const lastBoard = await prisma.board.findFirst({
+      where: {projectId},
+      orderBy: {order: 'desc'},
+    })
+     const newOrder = lastBoard ? lastBoard.order + 1: 0;
+     const newBoard = await prisma.board.create({
+      data: {
+        name, 
+        projectId,
+        order: newOrder,
+      },
+     });
+     res.status(201).json(newBoard);
+  } catch (error) {
+    console.error('Failed to create new board');
+    res.status(500).json({message: 'Failed to create board'});
+  }
+})
+
+
+// --- SERVER START ----
 
 app.listen(PORT, ()=>{
   console.log(`Server is running on http://localhost:${PORT}`);
