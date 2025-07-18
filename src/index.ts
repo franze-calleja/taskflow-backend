@@ -205,6 +205,65 @@ app.post('/api/projects/:projectId/boards', async (req, res) => {
 })
 
 
+// --- TASK ROUTES ---
+
+/**
+ * Route to get all tasks for a specific board.
+ */
+app.get('/api/boards/:boardId/tasks', async (req, res) => {
+  const { boardId } = req.params;
+  try{
+    const tasks = await prisma.task.findMany({
+    where: {boardId},
+    orderBy: {order: 'asc'}
+  });
+  res.status(200).json(tasks);
+  }catch(error){
+    console.error('Failed to get tasks:', error);
+    res.status(500).json({ message: 'Failed to get tasks' });
+
+  }
+  
+})
+
+/**
+ * Route to create a new task within a board.
+ */
+app.post('/api/boards/:boardId/tasks', async (req, res) => {
+  const { boardId} = req.params;
+  const {title, description} = req.body;
+
+  if (!title){
+    return res.status(400).json({message: 'Task title is required'});
+  }
+
+  try {
+    // Find the highest 'order' value for existing tasks in this board
+    const lastTask = await prisma.task.findFirst({
+      where: { boardId },
+      orderBy: { order: 'desc' },
+    });
+
+    const newOrder = lastTask ? lastTask.order + 1: 0;
+
+    const newTask = await prisma.task.create({
+      data:{
+        title,
+        description: description || null,
+        boardId,
+        order: newOrder,
+      },
+    })
+    res.status(201).json(newTask);
+
+  }catch(error){
+    console.error('Failed to create task:', error);
+    res.status(500).json({ message: 'Failed to create task' });
+
+  }
+})
+
+
 // --- SERVER START ----
 
 app.listen(PORT, ()=>{
