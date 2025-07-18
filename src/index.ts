@@ -2,6 +2,8 @@ import express  from "express";
 import cors from 'cors';
 import { PrismaClient } from "@prisma/client";
 import bcrypt from 'bcryptjs';
+import { AuthenticatedRequest, authenticateToken } from "./middleware/authenticate";
+
 
 // --- INITIAL SETUP ---
 const app = express();
@@ -94,6 +96,62 @@ app.post('/api/login', async (req, res) => {
     res.status(500).json({ message: 'An error occurred during login' });
   }
 });
+
+
+// --- PROJECT ROUTES
+
+/**
+ * Route to create a new project.
+ * This is now an "insecure" route, trusting the userId from the request body.
+ */
+app.post('/api/projects', async (req, res) => {
+  const { name, authorId } = req.body; // Get authorId from the body
+
+  if (!name || !authorId) {
+    return res.status(400).json({ message: 'Project name and authorId are required' });
+  }
+
+  try {
+    const newProject = await prisma.project.create({
+      data: {
+        name,
+        authorId: authorId,
+      },
+    });
+    res.status(201).json(newProject);
+  } catch (error) {
+    console.error('Failed to create project:', error);
+    res.status(500).json({ message: 'Failed to create project' });
+  }
+});
+
+
+/**
+ * Route to get all projects for a specific user.
+ */
+app.get('/api/projects/:userId', async (req, res) => {
+  const { userId } = req.params; // Get userId from the URL parameters
+
+  if (!userId) {
+    return res.status(400).json({ message: 'User ID is required' });
+  }
+
+  try {
+    const projects = await prisma.project.findMany({
+      where: {
+        authorId: userId,
+      },
+      orderBy: {
+        createdAt: 'desc',
+      },
+    });
+    res.status(200).json(projects);
+  } catch (error) {
+    console.error('Failed to get projects:', error);
+    res.status(500).json({ message: 'Failed to get projects' });
+  }
+});
+
 
 app.listen(PORT, ()=>{
   console.log(`Server is running on http://localhost:${PORT}`);
