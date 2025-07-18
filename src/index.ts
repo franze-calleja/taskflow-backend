@@ -152,6 +152,51 @@ app.get('/api/projects/:userId', async (req, res) => {
   }
 });
 
+/**
+ * Route to update a project's name.
+ */
+app.patch('/api/projects/:projectId', async (req, res) => {
+  const {projectId} = req.params;
+  const {name} = req.body;
+
+  if (!name){
+    return res.status(400).json({message: 'Project name is required'});
+  }
+
+  try {
+    const updatedProject = await prisma.project.update({
+      where: { id: projectId },
+      data: { name },
+    })
+    res.status(200).json(updatedProject)
+  } catch (error) {
+    console.error('Failed to update project', error);
+    res.status(500).json({message: 'Failed to update project'});
+    
+  }
+});
+
+/**
+ * Route to delete a project.
+ * Note: Thanks to our schema's `onDelete: Cascade` for boards,
+ * deleting a project will automatically delete all its boards,
+ * and deleting those boards will automatically delete all their tasks.
+ */
+app.delete('/api/projects/:projectId', async (req, res) => {
+  const {projectId} = req.params;
+
+  try {
+    await prisma.project.delete({
+      where: {id: projectId},
+
+    });
+    res.status(204).send(); // 204 No Content is standard for a successful delete
+  } catch (error) {
+     console.error('Failed to delete project:', error);
+    res.status(500).json({ message: 'Failed to delete project' });
+  }
+})
+
 // --- BOARD ROUTES ---
 
 /**
@@ -203,6 +248,47 @@ app.post('/api/projects/:projectId/boards', async (req, res) => {
     res.status(500).json({message: 'Failed to create board'});
   }
 })
+
+/**
+ * Route to update a board's name.
+ */
+app.patch('/api/boards/:boardId', async (req, res) => {
+  const { boardId } = req.params;
+  const { name } = req.body;
+
+  if (!name) {
+    return res.status(400).json({ message: 'Board name is required' });
+  }
+
+  try {
+    const updatedBoard = await prisma.board.update({
+      where: { id: boardId },
+      data: { name },
+    });
+    res.status(200).json(updatedBoard);
+  } catch (error) {
+    console.error('Failed to update board:', error);
+    res.status(500).json({ message: 'Failed to update board' });
+  }
+});
+
+/**
+ * Route to delete a board.
+ * This will also delete all tasks within this board due to cascading deletes.
+ */
+app.delete('/api/boards/:boardId', async (req, res) => {
+  const { boardId } = req.params;
+
+  try {
+    await prisma.board.delete({
+      where: { id: boardId },
+    });
+    res.status(204).send();
+  } catch (error) {
+    console.error('Failed to delete board:', error);
+    res.status(500).json({ message: 'Failed to delete board' });
+  }
+});
 
 
 // --- TASK ROUTES ---
@@ -262,6 +348,47 @@ app.post('/api/boards/:boardId/tasks', async (req, res) => {
 
   }
 })
+
+
+/**
+ * Route to update a task's title or description.
+ */
+app.patch('/api/tasks/:taskId', async (req, res) => {
+  const { taskId } = req.params;
+  const { title, description } = req.body;
+
+  try {
+    const updatedTask = await prisma.task.update({
+      where: { id: taskId },
+      data: {
+        // Only update fields that are provided in the request
+        ...(title && { title }),
+        ...(description !== undefined && { description }),
+      },
+    });
+    res.status(200).json(updatedTask);
+  } catch (error) {
+    console.error('Failed to update task:', error);
+    res.status(500).json({ message: 'Failed to update task' });
+  }
+});
+
+/**
+ * Route to delete a task.
+ */
+app.delete('/api/tasks/:taskId', async (req, res) => {
+  const { taskId } = req.params;
+
+  try {
+    await prisma.task.delete({
+      where: { id: taskId },
+    });
+    res.status(204).send();
+  } catch (error) {
+    console.error('Failed to delete task:', error);
+    res.status(500).json({ message: 'Failed to delete task' });
+  }
+});
 
 
 // --- SERVER START ----
