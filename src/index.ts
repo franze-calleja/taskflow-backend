@@ -394,36 +394,47 @@ app.delete('/api/tasks/:taskId', async (req, res) => {
  * Route to handle updating the order of tasks within a board,
  * or moving a task to a new board.
  */
-app.patch('/api/task/reorder', async (req, res) => {
-  const {boardId, orderedTasks } = req.body;
-  // orderedTasks is expected to be an array of task objects with at least an id property.
-  // e.g., [{ id: 'task1', ... }, { id: 'task2', ... }]
+app.post('/api/tasks/reorder', async (req, res) => {
+  const { boardId, orderedTasks } = req.body;
 
-  if (!boardId || !Array.isArray(orderedTasks)){
-    return res.status(400).json({message: 'Board ID and an array of ordered task are required'})
+
+  if (!boardId || !Array.isArray(orderedTasks)) {
+    return res.status(400).json({ message: 'Board ID and an array of ordered tasks are required.' });
   }
 
   try {
-    // We'll use a transaction to ensure all updates succeed or fail together.
-    // This is crucial for data integrity.
+    if (orderedTasks.length === 0) {
+      console.log('No tasks to reorder, sending success response.');
+      return res.status(200).json({ message: 'No tasks to reorder.' });
+    }
+
     const updatePromises = orderedTasks.map((task, index) => {
+      if (!task || !task.id) {
+        throw new Error('Invalid task data provided.');
+      }
       return prisma.task.update({
-        where: {id: task.id},
+        where: { id: task.id },
         data: {
           order: index,
-          boardId: boardId, // Ensure the task is associated with the correct board
-        }
-      })
+          boardId: boardId,
+        },
+      });
     });
-    // Execute all update operations in a single transaction
-    await prisma.$transaction(updatePromises);
 
-    res.status(200).json({message: 'Tasks reordered succesfully'})
-  } catch (error) {
-    console.error('Failed to reorder tasks:', error);
+    console.log(`Executing transaction with ${updatePromises.length} updates for board ${boardId}.`);
+    await prisma.$transaction(updatePromises);
+    console.log('--- TRANSACTION SUCCESSFUL ---');
+    res.status(200).json({ message: 'Tasks reordered successfully' });
+
+  } catch (error: any) {
+    console.error('--- FAILED TO REORDER TASKS (POST) ---');
+    console.error('Error during transaction:', error.message);
+    if (error.code) {
+      console.error('Prisma Error Code:', error.code);
+    }
+    console.error('---------------------------------');
     res.status(500).json({ message: 'Failed to reorder tasks' });
   }
-
 });
 
 
