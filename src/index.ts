@@ -1,123 +1,86 @@
-import express  from "express";
+import express from "express";
 import cors from 'cors';
 import { PrismaClient } from "@prisma/client";
 import bcrypt from 'bcryptjs';
-import { AuthenticatedRequest, authenticateToken } from "./middleware/authenticate";
-
+import { createServer } from 'http';
+import { Server } from 'socket.io';
 
 // --- INITIAL SETUP ---
 const app = express();
 const prisma = new PrismaClient();
 const PORT = process.env.PORT || 3001;
 
+// Create the HTTP server and pass the Express app to it
+const httpServer = createServer(app);
+
+// Initialize Socket.IO and attach it to the HTTP server
+const io = new Server(httpServer, {
+  cors: {
+    origin: "http://localhost:3000",
+    methods: ["GET", "POST", "PATCH", "DELETE"]
+  }
+});
+
 // --- MIDDLEWARE ---
-// Enable CORS for all routes
 app.use(cors());
-// Enable express to parse JSON in request bodies
 app.use(express.json());
 
-// ROUTES
+// --- SOCKET.IO CONNECTION HANDLER ---
+io.on('connection', (socket) => {
+  console.log(`🔌 New client connected: ${socket.id}`);
+  socket.on('joinProject', (projectId) => {
+    socket.join(projectId);
+    console.log(`Client ${socket.id} joined project room ${projectId}`);
+  });
+  socket.on('disconnect', () => {
+    console.log(`👋 Client disconnected: ${socket.id}`);
+  });
+});
 
-app.get('/', (req, res) =>{
+// --- ROUTES (Your existing code is perfect here) ---
+
+app.get('/', (req, res) => {
   res.send('TaskFlow Backend is running yay!')
-})
+});
 
-/**
- * Route to handle new user registration
- */
 app.post('/api/register', async (req, res) => {
   const { email, password, name } = req.body;
-
-  // Basic validation
-  if (!email || !password || !name) {
-    return res.status(400).json({ message: 'All fields are required' });
-  }
-
+  if (!email || !password || !name) { return res.status(400).json({ message: 'All fields are required' }); }
   try {
-    // Check if user already exists
     const existingUser = await prisma.user.findUnique({ where: { email } });
-    if (existingUser) {
-      return res.status(409).json({ message: 'User with this email already exists' });
-    }
-
-    // Hash the password for security
+    if (existingUser) { return res.status(409).json({ message: 'User with this email already exists' }); }
     const hashedPassword = await bcrypt.hash(password, 10);
-
-    // Create the new user in the database
-    const user = await prisma.user.create({
-      data: {
-        email,
-        password: hashedPassword,
-        name,
-      },
-    });
-
-    // Don't send the password back, even the hashed one
+    const user = await prisma.user.create({ data: { email, password: hashedPassword, name } });
     const { password: _, ...userWithoutPassword } = user;
     res.status(201).json(userWithoutPassword);
-
   } catch (error) {
     console.error('Registration error:', error);
     res.status(500).json({ message: 'An error occurred during registration' });
   }
 });
 
-/**
- * Route to handle user login
- */
-
 app.post('/api/login', async (req, res) => {
   const { email, password } = req.body;
-
-  if (!email || !password) {
-    return res.status(400).json({ message: 'Email and password are required' });
-  }
-
+  if (!email || !password) { return res.status(400).json({ message: 'Email and password are required' }); }
   try {
-    // Find the user by their email
     const user = await prisma.user.findUnique({ where: { email } });
-    if (!user) {
-      // Don't specify whether the email or password was wrong for security
-      return res.status(401).json({ message: 'Invalid credentials' });
-    }
-
-    // Compare the provided password with the stored hashed password
+    if (!user) { return res.status(401).json({ message: 'Invalid credentials' }); }
     const isPasswordValid = await bcrypt.compare(password, user.password);
-    if (!isPasswordValid) {
-      return res.status(401).json({ message: 'Invalid credentials' });
-    }
-
-    // If login is successful, return the user object (without the password)
+    if (!isPasswordValid) { return res.status(401).json({ message: 'Invalid credentials' }); }
     const { password: _, ...userWithoutPassword } = user;
     res.status(200).json(userWithoutPassword);
-
   } catch (error) {
     console.error('Login error:', error);
     res.status(500).json({ message: 'An error occurred during login' });
   }
 });
 
-
-// --- PROJECT ROUTES
-
-/**
- * Route to create a new project.
- * This is now an "insecure" route, trusting the userId from the request body.
- */
 app.post('/api/projects', async (req, res) => {
-  const { name, authorId } = req.body; // Get authorId from the body
-
-  if (!name || !authorId) {
-    return res.status(400).json({ message: 'Project name and authorId are required' });
-  }
-
+  const { name, authorId } = req.body;
+  if (!name || !authorId) { return res.status(400).json({ message: 'Project name and authorId are required' }); }
   try {
-    const newProject = await prisma.project.create({
-      data: {
-        name,
-        authorId: authorId,
-      },
-    });
+    const newProject = await prisma.project.create({ data: { name, authorId: authorId } });
+    io.emit('project: created', newProject);
     res.status(201).json(newProject);
   } catch (error) {
     console.error('Failed to create project:', error);
@@ -125,26 +88,11 @@ app.post('/api/projects', async (req, res) => {
   }
 });
 
-
-/**
- * Route to get all projects for a specific user.
- */
 app.get('/api/projects/:userId', async (req, res) => {
-  const { userId } = req.params; // Get userId from the URL parameters
-
-  if (!userId) {
-    return res.status(400).json({ message: 'User ID is required' });
-  }
-
+  const { userId } = req.params;
+  if (!userId) { return res.status(400).json({ message: 'User ID is required' }); }
   try {
-    const projects = await prisma.project.findMany({
-      where: {
-        authorId: userId,
-      },
-      orderBy: {
-        createdAt: 'desc',
-      },
-    });
+    const projects = await prisma.project.findMany({ where: { authorId: userId }, orderBy: { createdAt: 'desc' } });
     res.status(200).json(projects);
   } catch (error) {
     console.error('Failed to get projects:', error);
@@ -152,119 +100,65 @@ app.get('/api/projects/:userId', async (req, res) => {
   }
 });
 
-/**
- * Route to update a project's name.
- */
 app.patch('/api/projects/:projectId', async (req, res) => {
-  const {projectId} = req.params;
-  const {name} = req.body;
-
-  if (!name){
-    return res.status(400).json({message: 'Project name is required'});
-  }
-
+  const { projectId } = req.params;
+  const { name } = req.body;
+  if (!name) { return res.status(400).json({ message: 'Project name is required' }); }
   try {
-    const updatedProject = await prisma.project.update({
-      where: { id: projectId },
-      data: { name },
-    })
-    res.status(200).json(updatedProject)
+    const updatedProject = await prisma.project.update({ where: { id: projectId }, data: { name } });
+    io.emit('project:updated', updatedProject);
+    res.status(200).json(updatedProject);
   } catch (error) {
     console.error('Failed to update project', error);
-    res.status(500).json({message: 'Failed to update project'});
-    
+    res.status(500).json({ message: 'Failed to update project' });
   }
 });
 
-/**
- * Route to delete a project.
- * Note: Thanks to our schema's `onDelete: Cascade` for boards,
- * deleting a project will automatically delete all its boards,
- * and deleting those boards will automatically delete all their tasks.
- */
 app.delete('/api/projects/:projectId', async (req, res) => {
-  const {projectId} = req.params;
-
+  const { projectId } = req.params;
   try {
-    await prisma.project.delete({
-      where: {id: projectId},
-
-    });
-    res.status(204).send(); // 204 No Content is standard for a successful delete
+    await prisma.project.delete({ where: { id: projectId } });
+    io.emit('project:deleted', { id: projectId });
+    res.status(204).send();
   } catch (error) {
-     console.error('Failed to delete project:', error);
+    console.error('Failed to delete project:', error);
     res.status(500).json({ message: 'Failed to delete project' });
   }
-})
+});
 
-// --- BOARD ROUTES ---
-
-/**
- * Route to get all boards for a specific project.
- */
-app.get('/api/projects/:projectId/boards', async (req, res) =>{
-  const {projectId} = req.params;
-
-  try{
-    const boards = await prisma.board.findMany({
-      where: { projectId },
-      orderBy: { order: 'asc' }, // Order boards by their 'order' field
-    });
+app.get('/api/projects/:projectId/boards', async (req, res) => {
+  const { projectId } = req.params;
+  try {
+    const boards = await prisma.board.findMany({ where: { projectId }, orderBy: { order: 'asc' } });
     res.status(200).json(boards);
-  }catch(error){
+  } catch (error) {
     console.error('Failed to get boards', error);
-    res.status(500).json({message: 'Failed to get Boards'});
+    res.status(500).json({ message: 'Failed to get Boards' });
   }
 });
 
-/**
- * Route to create a new board within a project.
- */
 app.post('/api/projects/:projectId/boards', async (req, res) => {
-  const {projectId} = req.params;
-  const {name} = req.body;
-
-  if (!name){
-    return res.status(400).json({message: 'Board name is required'});
-  }
-
+  const { projectId } = req.params;
+  const { name } = req.body;
+  if (!name) { return res.status(400).json({ message: 'Board name is required' }); }
   try {
-    // Find the highest 'order' value for existing boards in this project
-    const lastBoard = await prisma.board.findFirst({
-      where: {projectId},
-      orderBy: {order: 'desc'},
-    })
-     const newOrder = lastBoard ? lastBoard.order + 1: 0;
-     const newBoard = await prisma.board.create({
-      data: {
-        name, 
-        projectId,
-        order: newOrder,
-      },
-     });
-     res.status(201).json(newBoard);
+    const lastBoard = await prisma.board.findFirst({ where: { projectId }, orderBy: { order: 'desc' } });
+    const newOrder = lastBoard ? lastBoard.order + 1 : 0;
+    const newBoard = await prisma.board.create({ data: { name, projectId, order: newOrder } });
+    io.to(projectId).emit('board:created', newBoard);
+    res.status(201).json(newBoard);
   } catch (error) {
     console.error('Failed to create new board');
-    res.status(500).json({message: 'Failed to create board'});
+    res.status(500).json({ message: 'Failed to create board' });
   }
-})
+});
 
-/**
- * Route to update a board's name.
- */
 app.patch('/api/boards/:boardId', async (req, res) => {
   const { boardId } = req.params;
   const { name } = req.body;
-
-  if (!name) {
-    return res.status(400).json({ message: 'Board name is required' });
-  }
-
+  if (!name) { return res.status(400).json({ message: 'Board name is required' }); }
   try {
-    const updatedBoard = await prisma.board.update({
-      where: { id: boardId },
-      data: { name },
-    });
+    const updatedBoard = await prisma.board.update({ where: { id: boardId }, data: { name } });
     res.status(200).json(updatedBoard);
   } catch (error) {
     console.error('Failed to update board:', error);
@@ -272,17 +166,10 @@ app.patch('/api/boards/:boardId', async (req, res) => {
   }
 });
 
-/**
- * Route to delete a board.
- * This will also delete all tasks within this board due to cascading deletes.
- */
 app.delete('/api/boards/:boardId', async (req, res) => {
   const { boardId } = req.params;
-
   try {
-    await prisma.board.delete({
-      where: { id: boardId },
-    });
+    await prisma.board.delete({ where: { id: boardId } });
     res.status(204).send();
   } catch (error) {
     console.error('Failed to delete board:', error);
@@ -290,82 +177,37 @@ app.delete('/api/boards/:boardId', async (req, res) => {
   }
 });
 
-
-// --- TASK ROUTES ---
-
-/**
- * Route to get all tasks for a specific board.
- */
 app.get('/api/boards/:boardId/tasks', async (req, res) => {
   const { boardId } = req.params;
-  try{
-    const tasks = await prisma.task.findMany({
-    where: {boardId},
-    orderBy: {order: 'asc'}
-  });
-  res.status(200).json(tasks);
-  }catch(error){
+  try {
+    const tasks = await prisma.task.findMany({ where: { boardId }, orderBy: { order: 'asc' } });
+    res.status(200).json(tasks);
+  } catch (error) {
     console.error('Failed to get tasks:', error);
     res.status(500).json({ message: 'Failed to get tasks' });
-
   }
-  
-})
+});
 
-/**
- * Route to create a new task within a board.
- */
 app.post('/api/boards/:boardId/tasks', async (req, res) => {
-  const { boardId} = req.params;
-  const {title, description} = req.body;
-
-  if (!title){
-    return res.status(400).json({message: 'Task title is required'});
-  }
-
+  const { boardId } = req.params;
+  const { title, description } = req.body;
+  if (!title) { return res.status(400).json({ message: 'Task title is required' }); }
   try {
-    // Find the highest 'order' value for existing tasks in this board
-    const lastTask = await prisma.task.findFirst({
-      where: { boardId },
-      orderBy: { order: 'desc' },
-    });
-
-    const newOrder = lastTask ? lastTask.order + 1: 0;
-
-    const newTask = await prisma.task.create({
-      data:{
-        title,
-        description: description || null,
-        boardId,
-        order: newOrder,
-      },
-    })
+    const lastTask = await prisma.task.findFirst({ where: { boardId }, orderBy: { order: 'desc' } });
+    const newOrder = lastTask ? lastTask.order + 1 : 0;
+    const newTask = await prisma.task.create({ data: { title, description: description || null, boardId, order: newOrder } });
     res.status(201).json(newTask);
-
-  }catch(error){
+  } catch (error) {
     console.error('Failed to create task:', error);
     res.status(500).json({ message: 'Failed to create task' });
-
   }
-})
+});
 
-
-/**
- * Route to update a task's title or description.
- */
 app.patch('/api/tasks/:taskId', async (req, res) => {
   const { taskId } = req.params;
   const { title, description } = req.body;
-
   try {
-    const updatedTask = await prisma.task.update({
-      where: { id: taskId },
-      data: {
-        // Only update fields that are provided in the request
-        ...(title && { title }),
-        ...(description !== undefined && { description }),
-      },
-    });
+    const updatedTask = await prisma.task.update({ where: { id: taskId }, data: { ...(title && { title }), ...(description !== undefined && { description }) } });
     res.status(200).json(updatedTask);
   } catch (error) {
     console.error('Failed to update task:', error);
@@ -373,16 +215,10 @@ app.patch('/api/tasks/:taskId', async (req, res) => {
   }
 });
 
-/**
- * Route to delete a task.
- */
 app.delete('/api/tasks/:taskId', async (req, res) => {
   const { taskId } = req.params;
-
   try {
-    await prisma.task.delete({
-      where: { id: taskId },
-    });
+    await prisma.task.delete({ where: { id: taskId } });
     res.status(204).send();
   } catch (error) {
     console.error('Failed to delete task:', error);
@@ -390,57 +226,30 @@ app.delete('/api/tasks/:taskId', async (req, res) => {
   }
 });
 
-/**
- * Route to handle updating the order of tasks within a board,
- * or moving a task to a new board.
- */
 app.post('/api/tasks/reorder', async (req, res) => {
   const { boardId, orderedTasks } = req.body;
-
-
-  if (!boardId || !Array.isArray(orderedTasks)) {
-    return res.status(400).json({ message: 'Board ID and an array of ordered tasks are required.' });
-  }
-
+  if (!boardId || !Array.isArray(orderedTasks)) { return res.status(400).json({ message: 'Board ID and an array of ordered tasks are required.' }); }
   try {
-    if (orderedTasks.length === 0) {
-      console.log('No tasks to reorder, sending success response.');
-      return res.status(200).json({ message: 'No tasks to reorder.' });
-    }
-
+    if (orderedTasks.length === 0) { return res.status(200).json({ message: 'No tasks to reorder.' }); }
     const updatePromises = orderedTasks.map((task, index) => {
-      if (!task || !task.id) {
-        throw new Error('Invalid task data provided.');
-      }
-      return prisma.task.update({
-        where: { id: task.id },
-        data: {
-          order: index,
-          boardId: boardId,
-        },
-      });
+      if (!task || !task.id) { throw new Error('Invalid task data provided.'); }
+      return prisma.task.update({ where: { id: task.id }, data: { order: index, boardId: boardId } });
     });
-
-    console.log(`Executing transaction with ${updatePromises.length} updates for board ${boardId}.`);
     await prisma.$transaction(updatePromises);
-    console.log('--- TRANSACTION SUCCESSFUL ---');
     res.status(200).json({ message: 'Tasks reordered successfully' });
-
   } catch (error: any) {
     console.error('--- FAILED TO REORDER TASKS (POST) ---');
     console.error('Error during transaction:', error.message);
-    if (error.code) {
-      console.error('Prisma Error Code:', error.code);
-    }
+    if (error.code) { console.error('Prisma Error Code:', error.code); }
     console.error('---------------------------------');
     res.status(500).json({ message: 'Failed to reorder tasks' });
   }
 });
 
-
 // --- SERVER START ----
 
-app.listen(PORT, ()=>{
-  console.log(`Server is running on http://localhost:${PORT}`);
-
-})
+// REAL-TIME FIX: We must start the httpServer that Socket.IO is attached to,
+// NOT the original Express app.
+httpServer.listen(PORT, () => {
+  console.log(`🚀 Server is running on http://localhost:${PORT}`);
+});
