@@ -390,6 +390,42 @@ app.delete('/api/tasks/:taskId', async (req, res) => {
   }
 });
 
+/**
+ * Route to handle updating the order of tasks within a board,
+ * or moving a task to a new board.
+ */
+app.patch('/api/task/reorder', async (req, res) => {
+  const {boardId, orderedTasks } = req.body;
+  // orderedTasks is expected to be an array of task objects with at least an id property.
+  // e.g., [{ id: 'task1', ... }, { id: 'task2', ... }]
+
+  if (!boardId || !Array.isArray(orderedTasks)){
+    return res.status(400).json({message: 'Board ID and an array of ordered task are required'})
+  }
+
+  try {
+    // We'll use a transaction to ensure all updates succeed or fail together.
+    // This is crucial for data integrity.
+    const updatePromises = orderedTasks.map((task, index) => {
+      return prisma.task.update({
+        where: {id: task.id},
+        data: {
+          order: index,
+          boardId: boardId, // Ensure the task is associated with the correct board
+        }
+      })
+    });
+    // Execute all update operations in a single transaction
+    await prisma.$transaction(updatePromises);
+
+    res.status(200).json({message: 'Tasks reordered succesfully'})
+  } catch (error) {
+    console.error('Failed to reorder tasks:', error);
+    res.status(500).json({ message: 'Failed to reorder tasks' });
+  }
+
+});
+
 
 // --- SERVER START ----
 
